@@ -1,0 +1,51 @@
+name: Fetch earnings (Alpha Vantage) -> data/earnings.json
+
+on:
+  schedule:
+    - cron: "9 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  update-json:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      AV_API_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get CSV for next 3 months
+        run: |
+          curl -sS "https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&horizon=3month&apikey=${AV_API_KEY}" -o cal.csv
+
+      - name: Convert CSV -> JSON
+        run: |
+          mkdir -p data
+          # Convert to JSON array; keep a few columns for the UI
+          python - <<'PY'
+          import csv, json, sys, time
+          rows=[]
+          with open('cal.csv', newline='', encoding='utf-8') as f:
+              r=csv.DictReader(f)
+              for row in r:
+                  rows.append({
+                      "date": row.get("reportDate"),
+                      "symbol": row.get("symbol"),
+                      "epsEstimated": row.get("estimate"),
+                      "revenueEstimated": None  # not in this CSV
+                  })
+          out={"generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "data": rows}
+          with open('data/earnings.json','w',encoding='utf-8') as f:
+              json.dump(out,f,ensure_ascii=False)
+          PY
+          rm -f cal.csv
+
+      - name: Commit & push
+        run: |
+          git config user.name "gh-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/earnings.json
+          git commit -m "chore(data): refresh earnings.json [skip ci]" || exit 0
+          git push
